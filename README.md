@@ -31,8 +31,9 @@ Ensure you have the following installed:
 - **VS Code / Android Studio** (Optional for development)
 - **Git** → [Download Here](https://git-scm.com/downloads)
 
-### **🔹 Step 1: Clone the Repository**
+### **🔹 **
 ```sh
+Step 1: Clone the Repository
 git clone https://github.com/vraj141/Easy-Park.git
 cd Easy-Park
 🔹 Step 2: Install Dependencies
