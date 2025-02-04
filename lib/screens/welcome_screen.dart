@@ -22,7 +22,7 @@ class WelcomeScreen extends StatelessWidget {
             ),
             SizedBox(height: 10),
             Text(
-              "Let's find the best parking spot near you!",
+              "Let's find the best parking spot nearby you!",
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 16),
             ),
