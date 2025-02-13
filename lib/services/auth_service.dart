@@ -10,6 +10,7 @@ class AuthService {
         email: email,
         password: password,
       );
+      await userCredential.user?.sendEmailVerification(); // Email Verification
       return userCredential.user;
     } catch (e) {
       print("Error signing up: $e");
@@ -24,6 +25,12 @@ class AuthService {
         email: email,
         password: password,
       );
+
+      if (!userCredential.user!.emailVerified) {
+        print("Please verify your email first.");
+        return null;
+      }
+
       return userCredential.user;
     } catch (e) {
       print("Error signing in: $e");

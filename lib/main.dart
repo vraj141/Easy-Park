@@ -1,6 +1,8 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'screens/login_screen.dart';
+import 'screens/maps_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,9 +28,26 @@ class MyApp extends StatelessWidget {
       title: 'EasyPark',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primarySwatch: Colors.blue,
+        primarySwatch: Colors.green,
       ),
-      home: LoginScreen(),
+      home: AuthCheck(),
+    );
+  }
+}
+
+// 🔥 AUTH CHECK - Redirects User to Login or Maps
+class AuthCheck extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.hasData && snapshot.data != null) {
+          return MapsScreen(); // Logged in, go to maps
+        } else {
+          return LoginScreen(); // Not logged in, go to login
+        }
+      },
     );
   }
 }
