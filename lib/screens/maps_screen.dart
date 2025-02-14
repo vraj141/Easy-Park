@@ -10,9 +10,19 @@ class MapsScreen extends StatefulWidget {
 }
 
 class _MapsScreenState extends State<MapsScreen> {
-  late GoogleMapController mapController;
+  late GoogleMapController _mapController;
   LatLng? _currentLocation;
-  String? _errorMessage;
+  bool _isLoading = true;
+  Set<Marker> _markers = {};
+
+  // 🅿️ Temporary parking spots (Actual university locations)
+  List<Map<String, dynamic>> _parkingSpots = [
+    {"lat": 45.9456, "lng": -66.6413, "name": "Aitken Centre Parking", "available_spaces": 5},
+    {"lat": 45.9482, "lng": -66.6425, "name": "Head Hall Parking", "available_spaces": 3},
+    {"lat": 45.9468, "lng": -66.6409, "name": "MacLaggan Hall Parking", "available_spaces": 7},
+    {"lat": 45.9449, "lng": -66.6410, "name": "Lady Beaverbrook Gym Parking", "available_spaces": 2},
+    {"lat": 45.9501, "lng": -66.6432, "name": "Student Union Building Parking", "available_spaces": 10},
+  ];
 
   @override
   void initState() {
@@ -20,50 +30,68 @@ class _MapsScreenState extends State<MapsScreen> {
     _getUserLocation();
   }
 
-  // Function to fetch user's live location
+  // 📍 Get User's Location
   Future<void> _getUserLocation() async {
-    bool serviceEnabled;
-    LocationPermission permission;
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return;
 
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      setState(() {
-        _errorMessage = "Location services are disabled. Please enable them.";
-      });
-      return;
-    }
-
-    permission = await Geolocator.checkPermission();
+    LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        setState(() {
-          _errorMessage = "Location permissions are denied.";
-        });
-        return;
-      }
+      if (permission == LocationPermission.deniedForever) return;
     }
 
-    if (permission == LocationPermission.deniedForever) {
-      setState(() {
-        _errorMessage = "Location permissions are permanently denied. Please enable them in settings.";
-      });
-      return;
-    }
-
-    Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high);
+    Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
 
     setState(() {
       _currentLocation = LatLng(position.latitude, position.longitude);
+      _isLoading = false;
+    });
+
+    _loadParkingMarkers();
+
+    _mapController.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(target: _currentLocation!, zoom: 16.0), // Medium zoom level
+      ),
+    );
+  }
+
+  // 📍 Add markers for parking spots
+  void _loadParkingMarkers() {
+    Set<Marker> markers = {
+      // User's current location - RED marker
+      Marker(
+        markerId: MarkerId("currentLocation"),
+        position: _currentLocation!,
+        infoWindow: InfoWindow(title: "You are here"),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+      ),
+
+      // Parking spots - YELLOW markers
+      for (var spot in _parkingSpots)
+        Marker(
+          markerId: MarkerId(spot["name"]),
+          position: LatLng(spot["lat"], spot["lng"]),
+          infoWindow: InfoWindow(
+            title: spot["name"],
+            snippet: "Available: ${spot["available_spaces"]} spots",
+          ),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
+        ),
+    };
+
+    setState(() {
+      _markers = markers;
     });
   }
 
-  // Logout function
   void _logout(BuildContext context) async {
     await FirebaseAuth.instance.signOut();
     Navigator.pushReplacement(
-        context, MaterialPageRoute(builder: (context) => LoginScreen()));
+      context,
+      MaterialPageRoute(builder: (context) => LoginScreen()),
+    );
   }
 
   @override
@@ -75,32 +103,30 @@ class _MapsScreenState extends State<MapsScreen> {
           IconButton(
             icon: Icon(Icons.logout),
             onPressed: () => _logout(context),
-          )
+          ),
         ],
       ),
-      body: _errorMessage != null
-          ? Center(child: Text(_errorMessage!, style: TextStyle(color: Colors.red, fontSize: 16)))
-          : _currentLocation == null
-              ? Center(child: CircularProgressIndicator())
-              : GoogleMap(
-                  initialCameraPosition: CameraPosition(
-                    target: _currentLocation!,
-                    zoom: 15,
-                  ),
-                  markers: {
-                    Marker(
-                      markerId: MarkerId("currentLocation"),
-                      position: _currentLocation!,
-                      infoWindow: InfoWindow(title: "You are here"),
-                      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+      body: _isLoading
+          ? Center(child: CircularProgressIndicator()) // Show loader while fetching location
+          : GoogleMap(
+              initialCameraPosition: CameraPosition(
+                target: _currentLocation ?? LatLng(45.9456, -66.6413), // Default location if null
+                zoom: 16.0, // Medium zoom level for visibility
+              ),
+              myLocationEnabled: true,
+              myLocationButtonEnabled: true,
+              markers: _markers,
+              onMapCreated: (GoogleMapController controller) {
+                _mapController = controller;
+                if (_currentLocation != null) {
+                  _mapController.animateCamera(
+                    CameraUpdate.newCameraPosition(
+                      CameraPosition(target: _currentLocation!, zoom: 16.0),
                     ),
-                  },
-                  onMapCreated: (GoogleMapController controller) {
-                    setState(() {
-                      mapController = controller;
-                    });
-                  },
-                ),
+                  );
+                }
+              },
+            ),
     );
   }
 }
