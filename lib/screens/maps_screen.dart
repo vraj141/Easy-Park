@@ -22,15 +22,17 @@ class _MapsScreenState extends State<MapsScreen> {
     _getUserLocation(); // Fetch user's current location
   }
 
-  /// 📍 Fetches user's real-time GPS location
+  /// 📍 Fetch user's real-time GPS location
   Future<void> _getUserLocation() async {
     try {
+      // Check if location services are enabled
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
         print("❌ Location services are disabled.");
         return;
       }
 
+      // Request location permissions
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
@@ -40,14 +42,18 @@ class _MapsScreenState extends State<MapsScreen> {
         }
       }
 
+      // Fetch user's GPS location
       Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      print("📍 Fetched User Location: ${position.latitude}, ${position.longitude}");
+
+      if (!mounted) return; // Prevent calling setState after widget is disposed
+
       setState(() {
         _currentLocation = LatLng(position.latitude, position.longitude);
         _isLoading = false;
       });
 
       _fetchParkingSpots(); // Load Firestore parking spots
-      _moveCameraToUserLocation();
     } catch (e) {
       print("❌ Error getting user location: $e");
     }
@@ -64,21 +70,25 @@ class _MapsScreenState extends State<MapsScreen> {
     }
   }
 
-  /// 🔥 Fetches parking spots from Firestore and updates map markers
+  /// 🔥 Fetch parking spots from Firestore and update map markers
   Future<void> _fetchParkingSpots() async {
     try {
       QuerySnapshot snapshot = await FirebaseFirestore.instance.collection('parkingspots').get();
+      print("✅ Fetched ${snapshot.docs.length} parking spots from Firestore.");
 
-      Set<Marker> markers = {
-        // 🔴 User's current location marker
-        if (_currentLocation != null)
+      Set<Marker> markers = {};
+
+      // 🔴 User's location marker
+      if (_currentLocation != null) {
+        markers.add(
           Marker(
             markerId: MarkerId("currentLocation"),
             position: _currentLocation!,
             infoWindow: InfoWindow(title: "You are here"),
             icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
           ),
-      };
+        );
+      }
 
       // 🅿️ Add Firestore parking spots as markers
       for (var doc in snapshot.docs) {
@@ -96,9 +106,13 @@ class _MapsScreenState extends State<MapsScreen> {
         );
       }
 
+      if (!mounted) return; // Prevent calling setState after widget is disposed
+
       setState(() {
         _markers = markers;
       });
+
+      _moveCameraToUserLocation();
     } catch (e) {
       print("❌ Error fetching parking spots from Firestore: $e");
     }
@@ -123,7 +137,7 @@ class _MapsScreenState extends State<MapsScreen> {
           ? Center(child: CircularProgressIndicator()) // Show loader while fetching location
           : GoogleMap(
               initialCameraPosition: CameraPosition(
-                target: _currentLocation ?? LatLng(45.9456, -66.6413), // Default location if null
+                target: _currentLocation ?? LatLng(0, 0), // Prevents crash if location is null
                 zoom: 16.0,
               ),
               myLocationEnabled: true,
