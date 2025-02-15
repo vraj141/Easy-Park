@@ -15,24 +15,25 @@ class _MapsScreenState extends State<MapsScreen> {
   LatLng? _currentLocation; // Stores user's real-time location
   bool _isLoading = true; // Loading state
   Set<Marker> _markers = {}; // Stores markers from Firestore
+  late Stream<Position> _positionStream; // 🔥 For real-time GPS tracking
 
   @override
   void initState() {
     super.initState();
-    _getUserLocation(); // Fetch user's current location
+    _getUserLocation(); // Fetch user's accurate location
   }
 
-  /// 📍 Fetch user's real-time GPS location
+  /// 📍 **Fetch User's Real-Time GPS Location with High Accuracy**
   Future<void> _getUserLocation() async {
     try {
-      // Check if location services are enabled
+      // ✅ **Check if location services are enabled**
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
         print("❌ Location services are disabled.");
         return;
       }
 
-      // Request location permissions
+      // ✅ **Request location permissions**
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
@@ -42,9 +43,13 @@ class _MapsScreenState extends State<MapsScreen> {
         }
       }
 
-      // Fetch user's GPS location
-      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      print("📍 Fetched User Location: ${position.latitude}, ${position.longitude}");
+      // ✅ **Get current location with high accuracy**
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.bestForNavigation, // **Maximum Accuracy**
+        forceAndroidLocationManager: true, // ✅ **Ensures high accuracy on Android**
+      );
+
+      print("📍 Accurate Location: ${position.latitude}, ${position.longitude}");
 
       if (!mounted) return; // Prevent calling setState after widget is disposed
 
@@ -53,13 +58,30 @@ class _MapsScreenState extends State<MapsScreen> {
         _isLoading = false;
       });
 
-      _fetchParkingSpots(); // Load Firestore parking spots
+      _fetchParkingSpots(); // Load parking spots from Firestore
+
+      // ✅ **Start real-time location updates**
+      _positionStream = Geolocator.getPositionStream(
+        locationSettings: LocationSettings(accuracy: LocationAccuracy.bestForNavigation),
+      );
+
+      _positionStream.listen((Position position) {
+        if (!mounted) return;
+        setState(() {
+          _currentLocation = LatLng(position.latitude, position.longitude);
+        });
+
+        print("📍 Updated Live Location: ${position.latitude}, ${position.longitude}");
+
+        _updateUserLocationMarker(); // ✅ **Updates user marker dynamically**
+      });
+
     } catch (e) {
       print("❌ Error getting user location: $e");
     }
   }
 
-  /// 🔄 Moves the map camera to user's location
+  /// 🔄 **Moves the Map Camera to User's Updated Location**
   void _moveCameraToUserLocation() {
     if (_currentLocation != null && _mapController != null) {
       _mapController.animateCamera(
@@ -70,7 +92,7 @@ class _MapsScreenState extends State<MapsScreen> {
     }
   }
 
-  /// 🔥 Fetch parking spots from Firestore and update map markers
+  /// 🔥 **Fetch Parking Spots from Firestore**
   Future<void> _fetchParkingSpots() async {
     try {
       QuerySnapshot snapshot = await FirebaseFirestore.instance.collection('parkingspots').get();
@@ -78,19 +100,7 @@ class _MapsScreenState extends State<MapsScreen> {
 
       Set<Marker> markers = {};
 
-      // 🔴 User's location marker
-      if (_currentLocation != null) {
-        markers.add(
-          Marker(
-            markerId: MarkerId("currentLocation"),
-            position: _currentLocation!,
-            infoWindow: InfoWindow(title: "You are here"),
-            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-          ),
-        );
-      }
-
-      // 🅿️ Add Firestore parking spots as markers
+      // 🅿️ **Add Firestore parking spots as markers**
       for (var doc in snapshot.docs) {
         var data = doc.data() as Map<String, dynamic>;
         markers.add(
@@ -106,19 +116,41 @@ class _MapsScreenState extends State<MapsScreen> {
         );
       }
 
-      if (!mounted) return; // Prevent calling setState after widget is disposed
+      if (!mounted) return; // Prevent setState after widget is disposed
 
       setState(() {
         _markers = markers;
       });
 
-      _moveCameraToUserLocation();
+      _updateUserLocationMarker(); // ✅ **Ensures user marker is updated**
     } catch (e) {
       print("❌ Error fetching parking spots from Firestore: $e");
     }
   }
 
-  /// 🔐 Logs out the user and redirects to login screen
+  /// 🏷️ **Update User's Location Marker on Map**
+  void _updateUserLocationMarker() {
+    if (_currentLocation == null) return;
+
+    setState(() {
+      // **Remove previous user location marker**
+      _markers.removeWhere((marker) => marker.markerId.value == "currentLocation");
+
+      // **Add updated user location marker**
+      _markers.add(
+        Marker(
+          markerId: MarkerId("currentLocation"),
+          position: _currentLocation!,
+          infoWindow: InfoWindow(title: "You are here"),
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+        ),
+      );
+    });
+
+    _moveCameraToUserLocation();
+  }
+
+  /// 🔐 **Logs out the user and redirects to login screen**
   void _logout(BuildContext context) async {
     await FirebaseAuth.instance.signOut();
     Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => LoginScreen()));
@@ -137,7 +169,7 @@ class _MapsScreenState extends State<MapsScreen> {
           ? Center(child: CircularProgressIndicator()) // Show loader while fetching location
           : GoogleMap(
               initialCameraPosition: CameraPosition(
-                target: _currentLocation ?? LatLng(0, 0), // Prevents crash if location is null
+                target: _currentLocation ?? LatLng(0, 0), // **Prevents crash if location is null**
                 zoom: 16.0,
               ),
               myLocationEnabled: true,
