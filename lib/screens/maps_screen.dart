@@ -1,3 +1,4 @@
+import 'dart:async'; // ✅ Fix: Import dart:async for StreamSubscription
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
@@ -15,7 +16,7 @@ class _MapsScreenState extends State<MapsScreen> {
   LatLng? _currentLocation; // Stores user's real-time location
   bool _isLoading = true; // Loading state
   Set<Marker> _markers = {}; // Stores markers from Firestore
-  late Stream<Position> _positionStream; // 🔥 For real-time GPS tracking
+  StreamSubscription<Position>? _positionStreamSubscription; // ✅ Fix: Real-time location listener
 
   @override
   void initState() {
@@ -43,10 +44,9 @@ class _MapsScreenState extends State<MapsScreen> {
         }
       }
 
-      // ✅ **Get current location with high accuracy**
+      // ✅ **Get the initial accurate GPS location**
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.bestForNavigation, // **Maximum Accuracy**
-        forceAndroidLocationManager: true, // ✅ **Ensures high accuracy on Android**
+        desiredAccuracy: LocationAccuracy.high, // **Ensures maximum accuracy**
       );
 
       print("📍 Accurate Location: ${position.latitude}, ${position.longitude}");
@@ -58,27 +58,32 @@ class _MapsScreenState extends State<MapsScreen> {
         _isLoading = false;
       });
 
-      _fetchParkingSpots(); // Load parking spots from Firestore
-
-      // ✅ **Start real-time location updates**
-      _positionStream = Geolocator.getPositionStream(
-        locationSettings: LocationSettings(accuracy: LocationAccuracy.bestForNavigation),
-      );
-
-      _positionStream.listen((Position position) {
-        if (!mounted) return;
-        setState(() {
-          _currentLocation = LatLng(position.latitude, position.longitude);
-        });
-
-        print("📍 Updated Live Location: ${position.latitude}, ${position.longitude}");
-
-        _updateUserLocationMarker(); // ✅ **Updates user marker dynamically**
-      });
+      _fetchParkingSpots(); // Load Firestore parking spots
+      _startLocationUpdates(); // Start real-time location tracking
 
     } catch (e) {
       print("❌ Error getting user location: $e");
     }
+  }
+
+  /// 🔄 **Starts Real-Time GPS Updates for User's Live Location**
+  void _startLocationUpdates() {
+    _positionStreamSubscription = Geolocator.getPositionStream(
+      locationSettings: LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation, // **Maximum Accuracy**
+        distanceFilter: 5, // **Updates location if user moves by 5 meters**
+      ),
+    ).listen((Position position) {
+      if (!mounted) return;
+
+      setState(() {
+        _currentLocation = LatLng(position.latitude, position.longitude);
+      });
+
+      print("📍 Live Location Updated: ${position.latitude}, ${position.longitude}");
+
+      _updateUserLocationMarker();
+    });
   }
 
   /// 🔄 **Moves the Map Camera to User's Updated Location**
@@ -154,6 +159,12 @@ class _MapsScreenState extends State<MapsScreen> {
   void _logout(BuildContext context) async {
     await FirebaseAuth.instance.signOut();
     Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => LoginScreen()));
+  }
+
+  @override
+  void dispose() {
+    _positionStreamSubscription?.cancel(); // ✅ Stop location tracking when screen is closed
+    super.dispose();
   }
 
   @override
