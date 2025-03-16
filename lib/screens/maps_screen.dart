@@ -1,7 +1,7 @@
-import 'dart:async'; // ✅ Fix: Import dart:async for StreamSubscription
+import 'dart:async';
+import 'dart:html' as html;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'login_screen.dart';
@@ -12,100 +12,124 @@ class MapsScreen extends StatefulWidget {
 }
 
 class _MapsScreenState extends State<MapsScreen> {
-  late GoogleMapController _mapController;
-  LatLng? _currentLocation; // Stores user's real-time location
-  bool _isLoading = true; // Loading state
-  Set<Marker> _markers = {}; // Stores markers from Firestore
-  StreamSubscription<Position>? _positionStreamSubscription; // ✅ Fix: Real-time location listener
+  GoogleMapController? _mapController;
+  LatLng? _currentLocation;
+  bool _isLoading = true;
+  bool _locationError = false;
+  String? _errorMessage;
+  Set<Marker> _markers = {};
+  StreamSubscription? _positionStreamSubscription;
 
   @override
   void initState() {
     super.initState();
-    _getUserLocation(); // Fetch user's accurate location
+    _checkAndRequestLocation();
   }
 
-  /// 📍 **Fetch User's Real-Time GPS Location with High Accuracy**
-  Future<void> _getUserLocation() async {
+  /// 📍 Check Geolocation Support and Fetch Location
+  Future<void> _checkAndRequestLocation() async {
     try {
-      // ✅ **Check if location services are enabled**
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        print("❌ Location services are disabled.");
+      // Check if geolocation is supported by the browser
+      if (html.window.navigator.geolocation == null) {
+        setState(() {
+          _isLoading = false;
+          _locationError = true;
+          _errorMessage = "Geolocation is not supported by this browser.";
+        });
         return;
       }
 
-      // ✅ **Request location permissions**
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.deniedForever) {
-          print("❌ Location permissions are permanently denied.");
-          return;
-        }
-      }
-
-      // ✅ **Get the initial accurate GPS location**
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high, // **Ensures maximum accuracy**
-      );
-
-      print("📍 Accurate Location: ${position.latitude}, ${position.longitude}");
-
-      if (!mounted) return; // Prevent calling setState after widget is disposed
-
-      setState(() {
-        _currentLocation = LatLng(position.latitude, position.longitude);
-        _isLoading = false;
-      });
-
-      _fetchParkingSpots(); // Load Firestore parking spots
-      _startLocationUpdates(); // Start real-time location tracking
-
+      await _getWebLocation();
     } catch (e) {
-      print("❌ Error getting user location: $e");
+      print("❌ Error checking geolocation: $e");
+      setState(() {
+        _isLoading = false;
+        _locationError = true;
+        _errorMessage = "Error accessing geolocation: $e";
+      });
     }
   }
 
-  /// 🔄 **Starts Real-Time GPS Updates for User's Live Location**
-  void _startLocationUpdates() {
-    _positionStreamSubscription = Geolocator.getPositionStream(
-      locationSettings: LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation, // **Maximum Accuracy**
-        distanceFilter: 5, // **Updates location if user moves by 5 meters**
-      ),
-    ).listen((Position position) {
-      if (!mounted) return;
+  /// 📍 Fetch Location Using Browser Geolocation API
+  Future<void> _getWebLocation() async {
+    try {
+      print("📍 Attempting to fetch web location...");
+      final geolocation = html.window.navigator.geolocation;
+      final position = await geolocation.getCurrentPosition();
+      print(
+          "📍 Web Geolocation: ${position.coords?.latitude?.toDouble() ?? 0.0}, ${position.coords?.longitude?.toDouble() ?? 0.0}");
 
+      if (!mounted) return;
       setState(() {
-        _currentLocation = LatLng(position.latitude, position.longitude);
+        _currentLocation = LatLng(
+          position.coords?.latitude?.toDouble() ?? 0.0,
+          position.coords?.longitude?.toDouble() ?? 0.0,
+        );
+        _isLoading = false;
+        _locationError = false;
       });
 
-      print("📍 Live Location Updated: ${position.latitude}, ${position.longitude}");
-
-      _updateUserLocationMarker();
-    });
+      _fetchParkingSpots();
+      _startRealTimeLocationUpdates();
+    } catch (e) {
+      print("❌ Error getting web location: $e");
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _locationError = true;
+        _errorMessage = "Failed to get location: $e";
+      });
+    }
   }
 
-  /// 🔄 **Moves the Map Camera to User's Updated Location**
+  /// 🔄 Start Real-Time Location Updates Using Browser WatchPosition
+  void _startRealTimeLocationUpdates() {
+    final geolocation = html.window.navigator.geolocation;
+    _positionStreamSubscription = geolocation.watchPosition().listen(
+      (position) {
+        if (!mounted) return;
+        setState(() {
+          _currentLocation = LatLng(
+            position.coords?.latitude?.toDouble() ?? 0.0,
+            position.coords?.longitude?.toDouble() ?? 0.0,
+          );
+        });
+        print(
+            "📍 Web Live Location: ${position.coords?.latitude?.toDouble() ?? 0.0}, ${position.coords?.longitude?.toDouble() ?? 0.0}");
+        _updateUserLocationMarker();
+      },
+      onError: (e) {
+        print("❌ Error in web location stream: $e");
+        if (!mounted) return;
+        setState(() {
+          _locationError = true;
+          _errorMessage = "Location tracking error: $e";
+        });
+      },
+    );
+  }
+
+  /// 🔄 Move Camera to User's Current Location
   void _moveCameraToUserLocation() {
-    if (_currentLocation != null && _mapController != null) {
-      _mapController.animateCamera(
+    if (_mapController != null && _currentLocation != null) {
+      print(
+          "🔄 Moving camera to: ${_currentLocation!.latitude}, ${_currentLocation!.longitude}");
+      _mapController!.animateCamera(
         CameraUpdate.newCameraPosition(
-          CameraPosition(target: _currentLocation!, zoom: 16.0),
+          CameraPosition(target: _currentLocation!, zoom: 18.0),
         ),
       );
     }
   }
 
-  /// 🔥 **Fetch Parking Spots from Firestore**
+  /// 🔥 Fetch Parking Spots from Firestore
   Future<void> _fetchParkingSpots() async {
     try {
-      QuerySnapshot snapshot = await FirebaseFirestore.instance.collection('parkingspots').get();
-      print("✅ Fetched ${snapshot.docs.length} parking spots from Firestore.");
+      QuerySnapshot snapshot =
+          await FirebaseFirestore.instance.collection('parkingspots').get();
+      print("✅ Loaded ${snapshot.docs.length} parking spots from Firestore.");
 
       Set<Marker> markers = {};
-
-      // 🅿️ **Add Firestore parking spots as markers**
       for (var doc in snapshot.docs) {
         var data = doc.data() as Map<String, dynamic>;
         markers.add(
@@ -121,27 +145,21 @@ class _MapsScreenState extends State<MapsScreen> {
         );
       }
 
-      if (!mounted) return; // Prevent setState after widget is disposed
-
+      if (!mounted) return;
       setState(() {
         _markers = markers;
       });
-
-      _updateUserLocationMarker(); // ✅ **Ensures user marker is updated**
+      _updateUserLocationMarker();
     } catch (e) {
-      print("❌ Error fetching parking spots from Firestore: $e");
+      print("❌ Error fetching parking spots: $e");
     }
   }
 
-  /// 🏷️ **Update User's Location Marker on Map**
+  /// 🏷️ Update User's Location Marker on Map
   void _updateUserLocationMarker() {
     if (_currentLocation == null) return;
-
     setState(() {
-      // **Remove previous user location marker**
       _markers.removeWhere((marker) => marker.markerId.value == "currentLocation");
-
-      // **Add updated user location marker**
       _markers.add(
         Marker(
           markerId: MarkerId("currentLocation"),
@@ -151,19 +169,30 @@ class _MapsScreenState extends State<MapsScreen> {
         ),
       );
     });
-
     _moveCameraToUserLocation();
   }
 
-  /// 🔐 **Logs out the user and redirects to login screen**
+  /// 🔐 Logout Function
   void _logout(BuildContext context) async {
     await FirebaseAuth.instance.signOut();
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => LoginScreen()));
+    Navigator.pushReplacement(
+        context, MaterialPageRoute(builder: (context) => LoginScreen()));
+  }
+
+  /// 🔄 Retry Fetching Location
+  void _retryFetchingLocation() {
+    setState(() {
+      _isLoading = true;
+      _locationError = false;
+      _errorMessage = null;
+    });
+    _checkAndRequestLocation();
   }
 
   @override
   void dispose() {
-    _positionStreamSubscription?.cancel(); // ✅ Stop location tracking when screen is closed
+    _positionStreamSubscription?.cancel();
+    _mapController?.dispose();
     super.dispose();
   }
 
@@ -176,21 +205,45 @@ class _MapsScreenState extends State<MapsScreen> {
           IconButton(icon: Icon(Icons.logout), onPressed: () => _logout(context)),
         ],
       ),
-      body: _isLoading
-          ? Center(child: CircularProgressIndicator()) // Show loader while fetching location
-          : GoogleMap(
-              initialCameraPosition: CameraPosition(
-                target: _currentLocation ?? LatLng(0, 0), // **Prevents crash if location is null**
-                zoom: 16.0,
-              ),
-              myLocationEnabled: true,
-              myLocationButtonEnabled: true,
-              markers: _markers,
-              onMapCreated: (GoogleMapController controller) {
-                _mapController = controller;
-                _moveCameraToUserLocation();
-              },
-            ),
+      body: Stack(
+        children: [
+          _isLoading
+              ? Center(child: CircularProgressIndicator())
+              : _locationError
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            _errorMessage ?? "Unable to fetch location.",
+                            style: TextStyle(color: Colors.red, fontSize: 16),
+                            textAlign: TextAlign.center,
+                          ),
+                          SizedBox(height: 20),
+                          ElevatedButton(
+                            onPressed: _retryFetchingLocation,
+                            child: Text("Retry"),
+                          ),
+                        ],
+                      ),
+                    )
+                  : GoogleMap(
+                      initialCameraPosition: CameraPosition(
+                        target: _currentLocation ?? LatLng(0, 0),
+                        zoom: 16.0,
+                      ),
+                      myLocationEnabled: true,
+                      myLocationButtonEnabled: true,
+                      markers: _markers,
+                      onMapCreated: (GoogleMapController controller) {
+                        _mapController = controller;
+                        if (_currentLocation != null) {
+                          _moveCameraToUserLocation();
+                        }
+                      },
+                    ),
+        ],
+      ),
     );
   }
 }
