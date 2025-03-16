@@ -34,7 +34,7 @@ class _MapsScreenState extends State<MapsScreen> {
     }
   }
 
-  /// 📍 Check Geolocation Support and Fetch Location with High Accuracy
+  /// 📍 Check Geolocation Support and Fetch Location with Highest Accuracy
   Future<void> _checkAndRequestLocation() async {
     if (_hasFetchedLocation) {
       print("📍 Already fetched location, skipping...");
@@ -52,7 +52,7 @@ class _MapsScreenState extends State<MapsScreen> {
         return;
       }
 
-      // Request high-accuracy location
+      // Request highest-accuracy location
       _hasFetchedLocation = true;
       await _getWebLocation(enableHighAccuracy: true);
     } catch (e) {
@@ -65,15 +65,15 @@ class _MapsScreenState extends State<MapsScreen> {
     }
   }
 
-  /// 📍 Fetch Location Using Browser Geolocation API with High Accuracy
-  Future<void> _getWebLocation({bool enableHighAccuracy = false}) async {
+  /// 📍 Fetch Location Using Browser Geolocation API with Highest Accuracy
+  Future<void> _getWebLocation({bool enableHighAccuracy = true}) async {
     try {
-      print("📍 Attempting to fetch web location with high accuracy: $enableHighAccuracy...");
+      print("📍 Attempting to fetch web location with highest accuracy: $enableHighAccuracy...");
       final geolocation = html.window.navigator.geolocation;
       final position = await geolocation.getCurrentPosition(
         enableHighAccuracy: enableHighAccuracy,
         maximumAge: Duration(milliseconds: 0), // Ensure fresh location
-        timeout: Duration(seconds: 15), // Timeout after 15 seconds
+        timeout: Duration(seconds: 20), // Extended timeout for better accuracy
       );
       final lat = position.coords?.latitude?.toDouble() ?? 0.0;
       final lon = position.coords?.longitude?.toDouble() ?? 0.0;
@@ -108,14 +108,14 @@ class _MapsScreenState extends State<MapsScreen> {
     }
   }
 
-  /// 🔄 Move Camera to User's Current Location
+  /// 🔄 Move Camera to User's Current Location with Closest Zoom
   void _moveCameraToUserLocation() {
     if (_mapController != null && _currentLocation != null && _mapReady) {
       print(
           "🔄 Moving camera to: ${_currentLocation!.latitude}, ${_currentLocation!.longitude}");
       _mapController!.animateCamera(
         CameraUpdate.newCameraPosition(
-          CameraPosition(target: _currentLocation!, zoom: 18.0),
+          CameraPosition(target: _currentLocation!, zoom: 17.0), // Closest zoom
         ),
       );
     } else {
@@ -234,7 +234,20 @@ class _MapsScreenState extends State<MapsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text("EasyPark Map"),
+        title: Row(
+          children: [
+            Image.asset(
+              'assets/logo.jpg', // Add logo from login page
+              height: 30,
+              fit: BoxFit.contain,
+            ),
+            SizedBox(width: 10),
+            Text(
+              "",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
         actions: [
           IconButton(icon: Icon(Icons.logout), onPressed: () => _logout(context)),
         ],
@@ -244,7 +257,7 @@ class _MapsScreenState extends State<MapsScreen> {
           GoogleMap(
             initialCameraPosition: CameraPosition(
               target: _currentLocation ?? LatLng(0, 0),
-              zoom: 18.0, // Tighter zoom for better detail
+              zoom: 18.0, // Closest zoom for initial view
             ),
             myLocationEnabled: true,
             myLocationButtonEnabled: true,
