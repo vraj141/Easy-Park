@@ -23,6 +23,7 @@ class _MapsScreenState extends State<MapsScreen> {
   bool _hasFetchedLocation = false; // Prevent double fetch
   bool _mapReady = false; // Track map initialization
   bool _isManuallySettingLocation = false; // Track manual location mode
+  LatLng? _initialLocation; // Store the initial location for fallback
 
   @override
   void initState() {
@@ -30,7 +31,7 @@ class _MapsScreenState extends State<MapsScreen> {
     if (!_hasFetchedLocation) {
       _checkAndRequestLocation().then((_) {
         if (_currentLocation != null && _mapReady) {
-          _fetchParkingSpots(); // Ensure parking spots load after location
+          _fetchParkingSpots(); // Load parking spots after initial location
         }
       });
     }
@@ -92,14 +93,17 @@ class _MapsScreenState extends State<MapsScreen> {
       }
 
       setState(() {
+        _initialLocation = LatLng(lat, lon); // Store initial location
         _currentLocation = LatLng(lat, lon);
         _locationAccuracy = accuracy;
         _isLoading = false;
-        _locationError = false;
         if (accuracy > 500) {
           _locationError = true;
           _errorMessage =
-              "Location accuracy is too low (${accuracy.toStringAsFixed(1)}m). Try outdoors, on a mobile device with GPS, or set your location manually.";
+              "Initial location accuracy is low (${accuracy.toStringAsFixed(1)}m). Use 'Set Location Manually' for precision.";
+        } else {
+          _locationError = false;
+          _errorMessage = null;
         }
       });
 
@@ -137,9 +141,10 @@ class _MapsScreenState extends State<MapsScreen> {
             _currentLocation = LatLng(lat, lon);
             _locationAccuracy = accuracy;
             if (accuracy > 500) {
+              _currentLocation = _initialLocation; // Fallback to initial location if accuracy drops
               _locationError = true;
               _errorMessage =
-                  "Live location accuracy is too low (${accuracy.toStringAsFixed(1)}m). Try outdoors, on a mobile device with GPS, or set your location manually.";
+                  "Live location accuracy is low (${accuracy.toStringAsFixed(1)}m). Using initial location. Set manually for precision.";
             } else {
               _locationError = false;
               _errorMessage = null;
