@@ -18,12 +18,9 @@ class _MapsScreenState extends State<MapsScreen> {
   bool _locationError = false;
   String? _errorMessage;
   Set<Marker> _markers = {};
-  StreamSubscription? _positionStreamSubscription;
-  double? _locationAccuracy; // To store the accuracy of the location
   bool _hasFetchedLocation = false; // Prevent double fetch
   bool _mapReady = false; // Track map initialization
   bool _isManuallySettingLocation = false; // Track manual location mode
-  LatLng? _initialLocation; // Store the initial location for fallback
 
   @override
   void initState() {
@@ -80,36 +77,25 @@ class _MapsScreenState extends State<MapsScreen> {
       );
       final lat = position.coords?.latitude?.toDouble() ?? 0.0;
       final lon = position.coords?.longitude?.toDouble() ?? 0.0;
-      final accuracy = position.coords?.accuracy?.toDouble() ?? -1.0; // Accuracy in meters
-      print("📍 Web Geolocation: $lat, $lon (Accuracy: ${accuracy}m)");
+      print("📍 Web Geolocation: $lat, $lon");
 
       if (!mounted) return;
       if (lat == 0.0 && lon == 0.0) {
         setState(() {
           _locationError = true;
-          _errorMessage = "Failed to get precise location. Try again or check permissions.";
+          _errorMessage = "Failed to get location. Set your location manually.";
         });
         return;
       }
 
       setState(() {
-        _initialLocation = LatLng(lat, lon); // Store initial location
         _currentLocation = LatLng(lat, lon);
-        _locationAccuracy = accuracy;
         _isLoading = false;
-        if (accuracy > 500) {
-          _locationError = true;
-          _errorMessage =
-              "Initial location accuracy is low (${accuracy.toStringAsFixed(1)}m). Use 'Set Location Manually' for precision.";
-        } else {
-          _locationError = false;
-          _errorMessage = null;
-        }
+        _locationError = false;
       });
 
       if (_mapReady) {
         _fetchParkingSpots();
-        _startRealTimeLocationUpdates();
       }
     } catch (e) {
       print("❌ Error getting web location: $e");
@@ -117,55 +103,9 @@ class _MapsScreenState extends State<MapsScreen> {
       setState(() {
         _isLoading = false;
         _locationError = true;
-        _errorMessage = "Failed to get location: $e. Ensure location permission is granted.";
+        _errorMessage = "Failed to get location: $e. Set your location manually.";
       });
     }
-  }
-
-  /// 🔄 Start Real-Time Location Updates Using Browser WatchPosition
-  void _startRealTimeLocationUpdates() {
-    final geolocation = html.window.navigator.geolocation;
-    _positionStreamSubscription = geolocation.watchPosition(
-      enableHighAccuracy: true,
-      maximumAge: Duration(milliseconds: 0),
-      timeout: Duration(seconds: 15),
-    ).listen(
-      (position) {
-        if (!mounted) return;
-        final lat = position.coords?.latitude?.toDouble() ?? 0.0;
-        final lon = position.coords?.longitude?.toDouble() ?? 0.0;
-        final accuracy = position.coords?.accuracy?.toDouble() ?? -1.0;
-        print("📍 Web Live Location: $lat, $lon (Accuracy: ${accuracy}m)");
-        if (lat != 0.0 || lon != 0.0) { // Only update if valid coordinates
-          setState(() {
-            _currentLocation = LatLng(lat, lon);
-            _locationAccuracy = accuracy;
-            if (accuracy > 500) {
-              _currentLocation = _initialLocation; // Fallback to initial location if accuracy drops
-              _locationError = true;
-              _errorMessage =
-                  "Live location accuracy is low (${accuracy.toStringAsFixed(1)}m). Using initial location. Set manually for precision.";
-            } else {
-              _locationError = false;
-              _errorMessage = null;
-            }
-          });
-          if (_mapReady) _updateUserLocationMarker();
-        }
-      },
-      onError: (e) {
-        print("❌ Error in web location stream: $e");
-        if (!mounted) return;
-        setState(() {
-          _locationError = true;
-          _errorMessage = "Location tracking error: $e";
-        });
-      },
-      onDone: () {
-        print("📍 Location stream closed.");
-        _positionStreamSubscription = null;
-      },
-    );
   }
 
   /// 🔄 Move Camera to User's Current Location
@@ -227,9 +167,7 @@ class _MapsScreenState extends State<MapsScreen> {
           position: _currentLocation!,
           infoWindow: InfoWindow(
             title: "You are here",
-            snippet: _locationAccuracy != null
-                ? "Accuracy: ${_locationAccuracy!.toStringAsFixed(1)}m"
-                : null,
+            snippet: "Manually Set or Initial Location",
           ),
           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
         ),
@@ -243,7 +181,6 @@ class _MapsScreenState extends State<MapsScreen> {
     if (_isManuallySettingLocation) {
       setState(() {
         _currentLocation = position;
-        _locationAccuracy = null; // Clear accuracy since this is manual
         _locationError = false;
         _errorMessage = null;
         _isManuallySettingLocation = false;
@@ -252,9 +189,6 @@ class _MapsScreenState extends State<MapsScreen> {
         _updateUserLocationMarker();
         _fetchParkingSpots(); // Refresh parking spots based on manual location
       }
-      // Stop live updates if manually set
-      _positionStreamSubscription?.cancel();
-      _positionStreamSubscription = null;
     }
   }
 
@@ -271,9 +205,9 @@ class _MapsScreenState extends State<MapsScreen> {
       _isLoading = true;
       _locationError = false;
       _errorMessage = null;
-      _locationAccuracy = null;
       _hasFetchedLocation = false; // Allow retry
       _isManuallySettingLocation = false;
+      _currentLocation = null; // Reset current location
     });
     _checkAndRequestLocation().then((_) {
       if (_currentLocation != null && _mapReady) {
@@ -286,13 +220,12 @@ class _MapsScreenState extends State<MapsScreen> {
   void _startManualLocationSetting() {
     setState(() {
       _isManuallySettingLocation = true;
-      _errorMessage = "Tap on the map to set your location manually.";
+      _errorMessage = "Tap on the map to set your exact location.";
     });
   }
 
   @override
   void dispose() {
-    _positionStreamSubscription?.cancel();
     _mapController?.dispose();
     super.dispose();
   }
@@ -311,7 +244,7 @@ class _MapsScreenState extends State<MapsScreen> {
           GoogleMap(
             initialCameraPosition: CameraPosition(
               target: _currentLocation ?? LatLng(0, 0),
-              zoom: 16.0,
+              zoom: 18.0, // Tighter zoom for better detail
             ),
             myLocationEnabled: true,
             myLocationButtonEnabled: true,
