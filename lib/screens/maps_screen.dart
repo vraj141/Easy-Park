@@ -19,15 +19,30 @@ class _MapsScreenState extends State<MapsScreen> {
   String? _errorMessage;
   Set<Marker> _markers = {};
   StreamSubscription? _positionStreamSubscription;
+  double? _locationAccuracy; // To store the accuracy of the location
+  bool _hasFetchedLocation = false; // Prevent double fetch
+  bool _mapReady = false; // Track map initialization
+  bool _isManuallySettingLocation = false; // Track manual location mode
 
   @override
   void initState() {
     super.initState();
-    _checkAndRequestLocation();
+    if (!_hasFetchedLocation) {
+      _checkAndRequestLocation().then((_) {
+        if (_currentLocation != null && _mapReady) {
+          _fetchParkingSpots(); // Ensure parking spots load after location
+        }
+      });
+    }
   }
 
-  /// 📍 Check Geolocation Support and Fetch Location
+  /// 📍 Check Geolocation Support and Fetch Location with High Accuracy
   Future<void> _checkAndRequestLocation() async {
+    if (_hasFetchedLocation) {
+      print("📍 Already fetched location, skipping...");
+      return;
+    }
+
     try {
       // Check if geolocation is supported by the browser
       if (html.window.navigator.geolocation == null) {
@@ -39,7 +54,9 @@ class _MapsScreenState extends State<MapsScreen> {
         return;
       }
 
-      await _getWebLocation();
+      // Request high-accuracy location
+      _hasFetchedLocation = true;
+      await _getWebLocation(enableHighAccuracy: true);
     } catch (e) {
       print("❌ Error checking geolocation: $e");
       setState(() {
@@ -50,34 +67,53 @@ class _MapsScreenState extends State<MapsScreen> {
     }
   }
 
-  /// 📍 Fetch Location Using Browser Geolocation API
-  Future<void> _getWebLocation() async {
+  /// 📍 Fetch Location Using Browser Geolocation API with High Accuracy
+  Future<void> _getWebLocation({bool enableHighAccuracy = false}) async {
     try {
-      print("📍 Attempting to fetch web location...");
+      print("📍 Attempting to fetch web location with high accuracy: $enableHighAccuracy...");
       final geolocation = html.window.navigator.geolocation;
-      final position = await geolocation.getCurrentPosition();
-      print(
-          "📍 Web Geolocation: ${position.coords?.latitude?.toDouble() ?? 0.0}, ${position.coords?.longitude?.toDouble() ?? 0.0}");
+      final position = await geolocation.getCurrentPosition(
+        enableHighAccuracy: enableHighAccuracy,
+        maximumAge: Duration(milliseconds: 0), // Ensure fresh location
+        timeout: Duration(seconds: 15), // Timeout after 15 seconds
+      );
+      final lat = position.coords?.latitude?.toDouble() ?? 0.0;
+      final lon = position.coords?.longitude?.toDouble() ?? 0.0;
+      final accuracy = position.coords?.accuracy?.toDouble() ?? -1.0; // Accuracy in meters
+      print("📍 Web Geolocation: $lat, $lon (Accuracy: ${accuracy}m)");
 
       if (!mounted) return;
+      if (lat == 0.0 && lon == 0.0) {
+        setState(() {
+          _locationError = true;
+          _errorMessage = "Failed to get precise location. Try again or check permissions.";
+        });
+        return;
+      }
+
       setState(() {
-        _currentLocation = LatLng(
-          position.coords?.latitude?.toDouble() ?? 0.0,
-          position.coords?.longitude?.toDouble() ?? 0.0,
-        );
+        _currentLocation = LatLng(lat, lon);
+        _locationAccuracy = accuracy;
         _isLoading = false;
         _locationError = false;
+        if (accuracy > 500) {
+          _locationError = true;
+          _errorMessage =
+              "Location accuracy is too low (${accuracy.toStringAsFixed(1)}m). Try outdoors, on a mobile device with GPS, or set your location manually.";
+        }
       });
 
-      _fetchParkingSpots();
-      _startRealTimeLocationUpdates();
+      if (_mapReady) {
+        _fetchParkingSpots();
+        _startRealTimeLocationUpdates();
+      }
     } catch (e) {
       print("❌ Error getting web location: $e");
       if (!mounted) return;
       setState(() {
         _isLoading = false;
         _locationError = true;
-        _errorMessage = "Failed to get location: $e";
+        _errorMessage = "Failed to get location: $e. Ensure location permission is granted.";
       });
     }
   }
@@ -85,18 +121,32 @@ class _MapsScreenState extends State<MapsScreen> {
   /// 🔄 Start Real-Time Location Updates Using Browser WatchPosition
   void _startRealTimeLocationUpdates() {
     final geolocation = html.window.navigator.geolocation;
-    _positionStreamSubscription = geolocation.watchPosition().listen(
+    _positionStreamSubscription = geolocation.watchPosition(
+      enableHighAccuracy: true,
+      maximumAge: Duration(milliseconds: 0),
+      timeout: Duration(seconds: 15),
+    ).listen(
       (position) {
         if (!mounted) return;
-        setState(() {
-          _currentLocation = LatLng(
-            position.coords?.latitude?.toDouble() ?? 0.0,
-            position.coords?.longitude?.toDouble() ?? 0.0,
-          );
-        });
-        print(
-            "📍 Web Live Location: ${position.coords?.latitude?.toDouble() ?? 0.0}, ${position.coords?.longitude?.toDouble() ?? 0.0}");
-        _updateUserLocationMarker();
+        final lat = position.coords?.latitude?.toDouble() ?? 0.0;
+        final lon = position.coords?.longitude?.toDouble() ?? 0.0;
+        final accuracy = position.coords?.accuracy?.toDouble() ?? -1.0;
+        print("📍 Web Live Location: $lat, $lon (Accuracy: ${accuracy}m)");
+        if (lat != 0.0 || lon != 0.0) { // Only update if valid coordinates
+          setState(() {
+            _currentLocation = LatLng(lat, lon);
+            _locationAccuracy = accuracy;
+            if (accuracy > 500) {
+              _locationError = true;
+              _errorMessage =
+                  "Live location accuracy is too low (${accuracy.toStringAsFixed(1)}m). Try outdoors, on a mobile device with GPS, or set your location manually.";
+            } else {
+              _locationError = false;
+              _errorMessage = null;
+            }
+          });
+          if (_mapReady) _updateUserLocationMarker();
+        }
       },
       onError: (e) {
         print("❌ Error in web location stream: $e");
@@ -106,12 +156,16 @@ class _MapsScreenState extends State<MapsScreen> {
           _errorMessage = "Location tracking error: $e";
         });
       },
+      onDone: () {
+        print("📍 Location stream closed.");
+        _positionStreamSubscription = null;
+      },
     );
   }
 
   /// 🔄 Move Camera to User's Current Location
   void _moveCameraToUserLocation() {
-    if (_mapController != null && _currentLocation != null) {
+    if (_mapController != null && _currentLocation != null && _mapReady) {
       print(
           "🔄 Moving camera to: ${_currentLocation!.latitude}, ${_currentLocation!.longitude}");
       _mapController!.animateCamera(
@@ -119,6 +173,8 @@ class _MapsScreenState extends State<MapsScreen> {
           CameraPosition(target: _currentLocation!, zoom: 18.0),
         ),
       );
+    } else {
+      print("⚠️ Cannot move camera: Map not ready or location null");
     }
   }
 
@@ -164,12 +220,37 @@ class _MapsScreenState extends State<MapsScreen> {
         Marker(
           markerId: MarkerId("currentLocation"),
           position: _currentLocation!,
-          infoWindow: InfoWindow(title: "You are here"),
+          infoWindow: InfoWindow(
+            title: "You are here",
+            snippet: _locationAccuracy != null
+                ? "Accuracy: ${_locationAccuracy!.toStringAsFixed(1)}m"
+                : null,
+          ),
           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
         ),
       );
     });
     _moveCameraToUserLocation();
+  }
+
+  /// 🖱️ Handle Manual Location Setting
+  void _onMapTapped(LatLng position) {
+    if (_isManuallySettingLocation) {
+      setState(() {
+        _currentLocation = position;
+        _locationAccuracy = null; // Clear accuracy since this is manual
+        _locationError = false;
+        _errorMessage = null;
+        _isManuallySettingLocation = false;
+      });
+      if (_mapReady) {
+        _updateUserLocationMarker();
+        _fetchParkingSpots(); // Refresh parking spots based on manual location
+      }
+      // Stop live updates if manually set
+      _positionStreamSubscription?.cancel();
+      _positionStreamSubscription = null;
+    }
   }
 
   /// 🔐 Logout Function
@@ -185,8 +266,23 @@ class _MapsScreenState extends State<MapsScreen> {
       _isLoading = true;
       _locationError = false;
       _errorMessage = null;
+      _locationAccuracy = null;
+      _hasFetchedLocation = false; // Allow retry
+      _isManuallySettingLocation = false;
     });
-    _checkAndRequestLocation();
+    _checkAndRequestLocation().then((_) {
+      if (_currentLocation != null && _mapReady) {
+        _fetchParkingSpots(); // Ensure parking spots load after retry
+      }
+    });
+  }
+
+  /// 🖱️ Start Manual Location Setting
+  void _startManualLocationSetting() {
+    setState(() {
+      _isManuallySettingLocation = true;
+      _errorMessage = "Tap on the map to set your location manually.";
+    });
   }
 
   @override
@@ -207,41 +303,49 @@ class _MapsScreenState extends State<MapsScreen> {
       ),
       body: Stack(
         children: [
-          _isLoading
-              ? Center(child: CircularProgressIndicator())
-              : _locationError
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            _errorMessage ?? "Unable to fetch location.",
-                            style: TextStyle(color: Colors.red, fontSize: 16),
-                            textAlign: TextAlign.center,
-                          ),
-                          SizedBox(height: 20),
-                          ElevatedButton(
-                            onPressed: _retryFetchingLocation,
-                            child: Text("Retry"),
-                          ),
-                        ],
-                      ),
-                    )
-                  : GoogleMap(
-                      initialCameraPosition: CameraPosition(
-                        target: _currentLocation ?? LatLng(0, 0),
-                        zoom: 16.0,
-                      ),
-                      myLocationEnabled: true,
-                      myLocationButtonEnabled: true,
-                      markers: _markers,
-                      onMapCreated: (GoogleMapController controller) {
-                        _mapController = controller;
-                        if (_currentLocation != null) {
-                          _moveCameraToUserLocation();
-                        }
-                      },
-                    ),
+          GoogleMap(
+            initialCameraPosition: CameraPosition(
+              target: _currentLocation ?? LatLng(0, 0),
+              zoom: 16.0,
+            ),
+            myLocationEnabled: true,
+            myLocationButtonEnabled: true,
+            markers: _markers,
+            onMapCreated: (GoogleMapController controller) {
+              _mapController = controller;
+              _mapReady = true; // Mark map as ready
+              if (_currentLocation != null) {
+                _moveCameraToUserLocation();
+                _fetchParkingSpots(); // Load parking spots after map is ready
+              }
+            },
+            onTap: _onMapTapped, // Allow manual location setting
+          ),
+          if (_isLoading)
+            Center(child: CircularProgressIndicator()),
+          if (_locationError && !_isLoading)
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _errorMessage ?? "Unable to fetch location.",
+                    style: TextStyle(color: Colors.red, fontSize: 16),
+                    textAlign: TextAlign.center,
+                  ),
+                  SizedBox(height: 20),
+                  ElevatedButton(
+                    onPressed: _retryFetchingLocation,
+                    child: Text("Retry"),
+                  ),
+                  SizedBox(height: 10),
+                  ElevatedButton(
+                    onPressed: _startManualLocationSetting,
+                    child: Text("Set Location Manually"),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
