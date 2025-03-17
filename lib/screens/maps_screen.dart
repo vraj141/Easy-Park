@@ -4,9 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'login_screen.dart';
 
 class MapsScreen extends StatefulWidget {
+  const MapsScreen({super.key});
+
   @override
   _MapsScreenState createState() => _MapsScreenState();
 }
@@ -18,214 +21,117 @@ class _MapsScreenState extends State<MapsScreen> {
   bool _locationError = false;
   String? _errorMessage;
   Set<Marker> _markers = {};
-  bool _hasFetchedLocation = false; // Prevent double fetch
-  bool _mapReady = false; // Track map initialization
-  bool _isManuallySettingLocation = false; // Track manual location mode
+  StreamSubscription? _positionStreamSubscription;
+  bool _mapReady = false;
 
   @override
   void initState() {
     super.initState();
-    if (!_hasFetchedLocation) {
-      _checkAndRequestLocation().then((_) {
-        if (_currentLocation != null && _mapReady) {
-          _fetchParkingSpots(); // Load parking spots after initial location
-        }
-      });
-    }
+    _checkAndRequestLocation();
+    _fetchParkingSpots();
   }
 
-  /// 📍 Check Geolocation Support and Fetch Location with Highest Accuracy
   Future<void> _checkAndRequestLocation() async {
-    if (_hasFetchedLocation) {
-      print("📍 Already fetched location, skipping...");
-      return;
-    }
-
     try {
-      // Check if geolocation is supported by the browser
-      if (html.window.navigator.geolocation == null) {
-        setState(() {
-          _isLoading = false;
-          _locationError = true;
-          _errorMessage = "Geolocation is not supported by this browser.";
-        });
-        return;
-      }
-
-      // Request highest-accuracy location
-      _hasFetchedLocation = true;
-      await _getWebLocation(enableHighAccuracy: true);
-    } catch (e) {
-      print("❌ Error checking geolocation: $e");
-      setState(() {
-        _isLoading = false;
-        _locationError = true;
-        _errorMessage = "Error accessing geolocation: $e";
-      });
-    }
-  }
-
-  /// 📍 Fetch Location Using Browser Geolocation API with Highest Accuracy
-  Future<void> _getWebLocation({bool enableHighAccuracy = true}) async {
-    try {
-      print("📍 Attempting to fetch web location with highest accuracy: $enableHighAccuracy...");
       final geolocation = html.window.navigator.geolocation;
-      final position = await geolocation.getCurrentPosition(
-        enableHighAccuracy: enableHighAccuracy,
-        maximumAge: Duration(milliseconds: 0), // Ensure fresh location
-        timeout: Duration(seconds: 20), // Extended timeout for better accuracy
-      );
-      final lat = position.coords?.latitude?.toDouble() ?? 0.0;
-      final lon = position.coords?.longitude?.toDouble() ?? 0.0;
-      print("📍 Web Geolocation: $lat, $lon");
+      final position = await geolocation.getCurrentPosition();
 
       if (!mounted) return;
-      if (lat == 0.0 && lon == 0.0) {
-        setState(() {
-          _locationError = true;
-          _errorMessage = "Failed to get location. Set your location manually.";
-        });
-        return;
-      }
-
       setState(() {
-        _currentLocation = LatLng(lat, lon);
+        _currentLocation = LatLng(
+          position.coords?.latitude?.toDouble() ?? 0.0,
+          position.coords?.longitude?.toDouble() ?? 0.0,
+        );
         _isLoading = false;
         _locationError = false;
       });
-
-      if (_mapReady) {
-        _fetchParkingSpots();
-      }
+      _updateUserLocationMarker();
     } catch (e) {
       print("❌ Error getting web location: $e");
       if (!mounted) return;
       setState(() {
         _isLoading = false;
         _locationError = true;
-        _errorMessage = "Failed to get location: $e. Set your location manually.";
+        _errorMessage = "Failed to get location: $e";
       });
     }
   }
 
-  /// 🔄 Move Camera to User's Current Location with Closest Zoom
-  void _moveCameraToUserLocation() {
-    if (_mapController != null && _currentLocation != null && _mapReady) {
-      print(
-          "🔄 Moving camera to: ${_currentLocation!.latitude}, ${_currentLocation!.longitude}");
-      _mapController!.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(target: _currentLocation!, zoom: 17.0), // Closest zoom
-        ),
-      );
-    } else {
-      print("⚠️ Cannot move camera: Map not ready or location null");
-    }
-  }
-
-  /// 🔥 Fetch Parking Spots from Firestore
-  Future<void> _fetchParkingSpots() async {
-    try {
-      QuerySnapshot snapshot =
-          await FirebaseFirestore.instance.collection('parkingspots').get();
-      print("✅ Loaded ${snapshot.docs.length} parking spots from Firestore.");
-
-      Set<Marker> markers = {};
-      for (var doc in snapshot.docs) {
-        var data = doc.data() as Map<String, dynamic>;
-        markers.add(
-          Marker(
-            markerId: MarkerId(doc.id),
-            position: LatLng(data["lat"], data["lng"]),
-            infoWindow: InfoWindow(
-              title: data["name"],
-              snippet: "Available: ${data["available_spaces"]} spots",
-            ),
-            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
-          ),
-        );
-      }
-
-      if (!mounted) return;
-      setState(() {
-        _markers = markers;
-      });
-      _updateUserLocationMarker();
-    } catch (e) {
-      print("❌ Error fetching parking spots: $e");
-    }
-  }
-
-  /// 🏷️ Update User's Location Marker on Map
   void _updateUserLocationMarker() {
     if (_currentLocation == null) return;
     setState(() {
-      _markers.removeWhere((marker) => marker.markerId.value == "currentLocation");
+      _markers
+          .removeWhere((marker) => marker.markerId.value == "currentLocation");
       _markers.add(
         Marker(
           markerId: MarkerId("currentLocation"),
           position: _currentLocation!,
-          infoWindow: InfoWindow(
-            title: "You are here",
-            snippet: "Manually Set or Initial Location",
-          ),
+          infoWindow: InfoWindow(title: "You are here"),
           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
         ),
       );
     });
-    _moveCameraToUserLocation();
-  }
-
-  /// 🖱️ Handle Manual Location Setting
-  void _onMapTapped(LatLng position) {
-    if (_isManuallySettingLocation) {
-      setState(() {
-        _currentLocation = position;
-        _locationError = false;
-        _errorMessage = null;
-        _isManuallySettingLocation = false;
-      });
-      if (_mapReady) {
-        _updateUserLocationMarker();
-        _fetchParkingSpots(); // Refresh parking spots based on manual location
-      }
+    if (_mapController != null) {
+      _mapController!.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(target: _currentLocation!, zoom: 17.5), // Updated to 17.5
+        ),
+      );
     }
   }
 
-  /// 🔐 Logout Function
-  void _logout(BuildContext context) async {
-    await FirebaseAuth.instance.signOut();
-    Navigator.pushReplacement(
-        context, MaterialPageRoute(builder: (context) => LoginScreen()));
-  }
+  Future<void> _fetchParkingSpots() async {
+    try {
+      QuerySnapshot snapshot =
+          await FirebaseFirestore.instance.collection('parkingspots').get();
 
-  /// 🔄 Retry Fetching Location
-  void _retryFetchingLocation() {
-    setState(() {
-      _isLoading = true;
-      _locationError = false;
-      _errorMessage = null;
-      _hasFetchedLocation = false; // Allow retry
-      _isManuallySettingLocation = false;
-      _currentLocation = null; // Reset current location
-    });
-    _checkAndRequestLocation().then((_) {
-      if (_currentLocation != null && _mapReady) {
-        _fetchParkingSpots(); // Ensure parking spots load after retry
+      Set<Marker> markers = {};
+      for (var doc in snapshot.docs) {
+        var data = doc.data() as Map<String, dynamic>;
+        LatLng position = LatLng(data["lat"], data["lng"]);
+
+        markers.add(
+          Marker(
+            markerId: MarkerId(doc.id),
+            position: position,
+            infoWindow: InfoWindow(
+              title: data["name"],
+              snippet: "Available: ${data["available_spaces"]} spots",
+              onTap: () => _navigateToLocation(position),
+            ),
+            icon: BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueYellow),
+          ),
+        );
       }
-    });
+
+      setState(() {
+        _markers.addAll(markers);
+      });
+    } catch (e) {
+      print("Error fetching parking spots: $e");
+    }
   }
 
-  /// 🖱️ Start Manual Location Setting
-  void _startManualLocationSetting() {
-    setState(() {
-      _isManuallySettingLocation = true;
-      _errorMessage = "Tap on the map to set your exact location.";
-    });
+  void _navigateToLocation(LatLng destination) async {
+    if (_currentLocation == null) {
+      print("❌ Error: Current location is not available.");
+      return;
+    }
+
+    final url =
+        "https://www.google.com/maps/dir/?api=1&origin=${_currentLocation!.latitude},${_currentLocation!.longitude}&destination=${destination.latitude},${destination.longitude}&travelmode=driving";
+
+    if (await canLaunchUrl(Uri.parse(url))) {
+      await launchUrl(Uri.parse(url));
+    } else {
+      print("❌ Could not launch $url");
+    }
   }
 
   @override
   void dispose() {
+    _positionStreamSubscription?.cancel();
     _mapController?.dispose();
     super.dispose();
   }
@@ -249,54 +155,65 @@ class _MapsScreenState extends State<MapsScreen> {
           ],
         ),
         actions: [
-          IconButton(icon: Icon(Icons.logout), onPressed: () => _logout(context)),
+          IconButton(
+              icon: Icon(Icons.logout),
+              onPressed: () async {
+                await FirebaseAuth.instance.signOut();
+                Navigator.pushReplacement(context,
+                    MaterialPageRoute(builder: (context) => LoginScreen()));
+              }),
         ],
       ),
       body: Stack(
         children: [
-          GoogleMap(
-            initialCameraPosition: CameraPosition(
-              target: _currentLocation ?? LatLng(0, 0),
-              zoom: 18.0, // Closest zoom for initial view
-            ),
-            myLocationEnabled: true,
-            myLocationButtonEnabled: true,
-            markers: _markers,
-            onMapCreated: (GoogleMapController controller) {
-              _mapController = controller;
-              _mapReady = true; // Mark map as ready
-              if (_currentLocation != null) {
-                _moveCameraToUserLocation();
-                _fetchParkingSpots(); // Load parking spots after map is ready
-              }
-            },
-            onTap: _onMapTapped, // Allow manual location setting
-          ),
-          if (_isLoading)
-            Center(child: CircularProgressIndicator()),
-          if (_locationError && !_isLoading)
-            Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    _errorMessage ?? "Unable to fetch location.",
-                    style: TextStyle(color: Colors.red, fontSize: 16),
-                    textAlign: TextAlign.center,
-                  ),
-                  SizedBox(height: 20),
-                  ElevatedButton(
-                    onPressed: _retryFetchingLocation,
-                    child: Text("Retry"),
-                  ),
-                  SizedBox(height: 10),
-                  ElevatedButton(
-                    onPressed: _startManualLocationSetting,
-                    child: Text("Set Location Manually"),
-                  ),
-                ],
-              ),
-            ),
+          _isLoading
+              ? Center(child: CircularProgressIndicator())
+              : _locationError
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            _errorMessage ?? "Unable to fetch location.",
+                            style: TextStyle(color: Colors.red, fontSize: 16),
+                            textAlign: TextAlign.center,
+                          ),
+                          SizedBox(height: 20),
+                          ElevatedButton(
+                            onPressed: () {
+                              setState(() {
+                                _isLoading = true;
+                                _locationError = false;
+                                _errorMessage = null;
+                              });
+                              _checkAndRequestLocation();
+                            },
+                            child: Text("Retry"),
+                          ),
+                        ],
+                      ),
+                    )
+                  : GoogleMap(
+                      initialCameraPosition: CameraPosition(
+                        target: _currentLocation ?? LatLng(37.7749, -122.4194),
+                        zoom: 17.5, // Updated to 17.5
+                      ),
+                      myLocationEnabled: true,
+                      myLocationButtonEnabled: true,
+                      markers: _markers,
+                      onMapCreated: (GoogleMapController controller) {
+                        _mapController = controller;
+                        _mapReady = true;
+                        if (_currentLocation != null) {
+                          _mapController!.animateCamera(
+                            CameraUpdate.newCameraPosition(
+                              CameraPosition(
+                                  target: _currentLocation!, zoom: 17.5),
+                            ),
+                          );
+                        }
+                      },
+                    ),
         ],
       ),
     );

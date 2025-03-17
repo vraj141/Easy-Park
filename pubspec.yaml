@@ -14,6 +14,7 @@ dependencies:
   google_maps_webservice: ^0.0.20-nullsafety.5 # Add this line
   firebase_auth: ^5.4.1
   cloud_firestore: ^5.6.3 
+  url_launcher: ^6.1.10 # Add this line
   provider: ^6.1.2
   google_maps_flutter: ^2.10.0
   google_maps_flutter_web: ^0.5.10
